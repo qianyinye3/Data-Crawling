@@ -1,0 +1,356 @@
+#coding=utf8
+# Create your views here.
+#encoding=utf-8
+
+import requests as rs
+import random
+import re
+import time,random
+import numpy as np
+import sys,datetime
+import json
+from datetime import timedelta
+reload(sys)
+sys.path.append("./")
+sys.setdefaultencoding('utf8')
+from bs4 import BeautifulSoup
+import bs4 as bs
+import pandas as pd
+
+POST = ""
+msg_file = file('./text/message_hk01_2019-10-09.txt','a')
+#msg_file.write("M_id\tMain_message\tPost_id\tOri_user_id\tDes_user_id\tQuot_id\tDate\tTime\tDate_now\tTime_now\tRating\tContent\tQuoteContent\tLike\tDislike\n")
+
+msg_file1 = file('./text/lmt_message_hk01_2019-10-09.txt','a')
+#msg_file1.write("Post_id\tLast_modify_time\n")
+
+cookie = {"__cfduid":"d84059ab7436aa041d16f756c1aa2a5431516022345",
+		  "hkgess":"4cogst45oe5mq4ftbmi2rx55",
+		  "JSESSIONID":"D3B874B61F09703494166710A64DB072"}
+
+
+def main():
+	global POST
+	count = 0
+	for line in file("./text/full_post.txt"):
+		count += 1
+		if count == 1:
+			continue
+		Info = line.strip().split("\t")
+		company_url = Info[-1]
+		print company_url
+		POST = Info[0]
+
+		try:
+			review_count = get_main_info(company_url)
+		except:
+			time.sleep(60)
+			print "retry the first time . . . "
+			review_count = get_main_info(company_url)
+
+		#get_relevant_review(company_url,review_count)
+		#return
+
+def get_main_info(url):
+	global POST
+	'''
+	1.get the page number
+	2.save the data in the database
+
+
+	
+	'''
+	global cookie,WEBSITE
+	
+	s = rs.Session()
+	headers = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36'}
+	#ip_list = ["157.230.253.36:8080", "177.93.177.92:8080","200.84.169.6:8080","159.203.118.239:8080","34.73.43.127:8080","87.226.213.120:8080","91.208.39.70:8080",
+	#"142.93.196.92:8080","103.215.177.183:8080","168.70.27.182:8080","116.212.140.111:8080"]
+	#ip = random.choice(ip_list)
+	#proxies = { "http": "http://"+ip, "https": "http://"+ip }
+	time.sleep(10)
+	r = s.get(url,cookies=cookie,headers=headers)#,proxies=proxies)
+	company_name = url.split("/")[-1]
+	content =  r.text.encode("utf8")
+
+
+	return extract_message_content(content)
+
+def	extract_message_content(content):
+	global msg_file,POST,msg_file1
+
+	'''
+	get the message content.
+	'''
+	soup = BeautifulSoup(content)
+	time.sleep(5)
+	try:
+		author = soup.find("a",class_='sc-gqjmRU dhKqyP').text
+		print(author)
+	except:
+		author = ""
+
+	try:
+		Time= soup.find("div",class_="pubdate").text
+		Date = Time.split(" ")[0]
+	except:
+		Time = ""
+		Date = ""
+	try:
+		Last_modify_time = soup.find("address").find_all("span",class_="sc-gqjmRU kKsieB")[-1].text.split("期：")[-1]
+		time_list = []
+		time_list.append(POST)
+		time_list.append(Last_modify_time)
+		msg_file1.write("\t".join(time_list).replace("\n","").replace("\r","")+"\n")
+	except:
+		Last_modify_time = "None"
+		time_list = []
+		time_list.append(POST)
+		time_list.append(Last_modify_time)
+		msg_file1.write("\t".join(time_list).replace("\n","").replace("\r","")+"\n")
+
+	try:
+		# get content
+		content1 = soup.find_all("p",class_="wa4tvz-0")
+		C1 = []
+		for i in content1:
+			c1 = i.text.decode("utf8")
+			C1.append(c1)
+		content2 = soup.find_all("p",class_="u02q31-0")
+		C2 = []
+		for i in content2:
+			c2 = i.text.decode("utf8")
+			C2.append(c2)
+		content = str(C1+C2).replace("[","").replace("]","")
+		print(content)
+		content = content.replace("u'","").replace("'","").strip()
+	except:
+		content = ""
+######################################
+	time.sleep(5)
+	main_message = "1"
+	dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%m:%S")
+
+	message_list = []
+	message_list.append("")
+	message_list.append(main_message)
+	message_list.append(POST)
+	message_list.append(author)
+	message_list.append("")
+	message_list.append("")
+	message_list.append(Date)
+	message_list.append(Time)
+	message_list.append(dt.split(" ")[0])
+	message_list.append(str(dt))
+	message_list.append("")
+	message_list.append(content.decode('unicode_escape'))
+	message_list.append("")
+	message_list.append("")
+	message_list.append("")
+	msg_file.write("\t".join(message_list).replace("\n","").replace("\r","")+"\n")
+#############################################################################################
+	link = "https://web-data.api.hk01.com/v2/page/article/"+POST #for each article
+	Info = get_content(link)
+	data_api = Info.json()
+	try:
+		access_token = data_api['comment']['accessToken']
+		print(access_token)
+		main_message = "0"
+		url = "https://prod-comment-api.dwnews.com/v1/api/"
+		load ={"access_token":access_token,"do":"get_article_comment_info","form_category_id":"3","key": "https://www.hk01.com/article/"+POST}
+		headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36"}
+		r1 = rs.post(url,headers=headers,data = load)
+		'''
+		M_id
+		Main_message
+		Post_id
+		Ori_user_id
+		Des_user_id
+		Quot_id
+		Date
+		Time
+		Date_now
+		Time_now
+
+		Rating
+		Content
+		QuoteContent
+		Like
+		Dislike
+		'''
+		container = r1.json()
+		time.sleep(5)
+		try:
+			comment1 = container['commentList']
+			for i in comment1:
+				try:
+					Children = i["children"]
+					for i in Children:
+						m_id = i['id']
+						like = i['support']
+						dislike = i['dislike']
+						Rating = like-dislike
+						author = i['commentUserId']
+						quota_id = i['commentParentId']
+						content = i['commentContent']
+						unix_publish_time = i['commentCreatedAt']
+						publish_time = str(datetime.datetime.fromtimestamp(unix_publish_time))
+						dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%m:%S")
+
+						message_list = []
+						message_list.append(m_id)
+						message_list.append(main_message)
+						message_list.append(POST)
+						message_list.append(author)
+						message_list.append(quota_id)
+						message_list.append(quota_id)
+						message_list.append(publish_time.split(" ")[0])
+						message_list.append(publish_time)
+						message_list.append(dt.split(" ")[0])
+						message_list.append(str(dt))
+						message_list.append(str(Rating))
+						message_list.append(str(content))
+						message_list.append("")
+						message_list.append(str(like))
+						message_list.append(str(dislike))
+						msg_file.write("\t".join(message_list).replace("\n","").replace("\r","")+"\n")
+				except:
+					m_id = i['id']
+					like = i['support']
+					dislike = i['dislike']
+					Rating = str(like-dislike)
+					author = i['commentUserId']
+					quota_id = i['commentToUserId']
+					content = i['commentContent']
+					unix_publish_time = i['commentCreatedAt']
+					publish_time = str(datetime.datetime.fromtimestamp(unix_publish_time))
+					dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%m:%S")
+
+					message_list = []
+					message_list.append(m_id)
+					message_list.append(main_message)
+					message_list.append(POST)
+					message_list.append(author)
+					message_list.append(quota_id)
+					message_list.append(quota_id)
+					message_list.append(publish_time.split(" ")[0])
+					message_list.append(publish_time)
+					message_list.append(dt.split(" ")[0])
+					message_list.append(str(dt))
+					message_list.append(str(Rating))
+					message_list.append(str(content))
+					message_list.append("")
+					message_list.append(str(like))
+					message_list.append(str(dislike))
+					msg_file.write("\t".join(message_list).replace("\n","").replace("\r","")+"\n")
+			try:
+				LMK = container["loadMoreKey"]
+
+				while True:
+					load ={"access_token":access_token,"do":"get_article_comment_info","form_category_id":"3","key": "https://www.hk01.com/article/"+POST,"pagesize":"2","sum":"2","loadMoreKey":LMK}
+					headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36"}
+					r2 = rs.post(url,headers=headers,data = load)
+					container = r2.json()
+					comment2 = container['commentList']
+					for i in comment2:
+						try:
+							Children = i["children"]
+							for i in Children:
+								m_id = i['id']
+								like = i['support']
+								dislike = i['dislike']
+								Rating = like-dislike
+								author = i['commentUserId']
+								quota_id = i['commentParentId']
+								content = i['commentContent']
+								unix_publish_time = i['commentCreatedAt']
+								publish_time = str(datetime.datetime.fromtimestamp(unix_publish_time))
+								dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%m:%S")
+
+								message_list = []
+								message_list.append(m_id)
+								message_list.append(main_message)
+								message_list.append(POST)
+								message_list.append(author)
+								message_list.append(quota_id)
+								message_list.append(quota_id)
+								message_list.append(publish_time.split(" ")[0])
+								message_list.append(publish_time)
+								message_list.append(dt.split(" ")[0])
+								message_list.append(str(dt))
+								message_list.append(str(Rating))
+								message_list.append(str(content))
+								message_list.append("")
+								message_list.append(str(like))
+								message_list.append(str(dislike))
+								msg_file.write("\t".join(message_list).replace("\n","").replace("\r","")+"\n")
+						except:
+							m_id = i['id']
+							like = i['support']
+							dislike = i['dislike']
+							Rating = str(like-dislike)
+							author = i['commentUserId']
+							quota_id = i['commentToUserId']
+							content = i['commentContent']
+							unix_publish_time = i['commentCreatedAt']
+							publish_time = str(datetime.datetime.fromtimestamp(unix_publish_time))
+							dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%m:%S")
+
+							message_list = []
+							message_list.append(m_id)
+							message_list.append(main_message)
+							message_list.append(POST)
+							message_list.append(author)
+							message_list.append(quota_id)
+							message_list.append(quota_id)
+							message_list.append(publish_time.split(" ")[0])
+							message_list.append(publish_time)
+							message_list.append(dt.split(" ")[0])
+							message_list.append(dt)
+							message_list.append(Rating)
+							message_list.append(content)
+							message_list.append("")
+							message_list.append(str(like))
+							message_list.append(str(dislike))
+							msg_file.write("\t".join(message_list).replace("\n","").replace("\r","")+"\n")
+					LMK = container["loadMoreKey"]   
+					print(LMK)
+					if LMK == False:
+						break
+			except:
+				pass
+		except:
+			pass
+
+	except:
+		pass
+
+def get_content(url):
+	global cookie
+			
+	s = rs.Session()
+	headers = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36'}
+	r = s.get(url,cookies=cookie,headers=headers)
+	return r
+
+def format_time(ori_time):
+	#print ori_time
+	#23/1/2018\n 15:45\t
+	Info = ori_time.split(' ')
+	date = Info[0]
+	time = Info[1]
+	date_list = date.split("/")
+
+	return "%s/%s/%s %s:%s"%(date_list[2],date_list[1],date_list[0],time.strip(),"00")
+
+#get_main_info()
+def get_relevant_review(url,reviews):
+	number_of_pages = np.floor(float(reviews)/1)
+	for PN in range(2,int(number_of_pages)+1):
+		PN = str(PN)
+		page_url = url+"&page="+PN
+		print page_url
+		content = get_content(page_url)
+		extract_message_content(content,0)
+
+main()
